@@ -5,10 +5,11 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 )
 
-type Spec struct {
+type spec struct {
 	// Request (matcher)
 	Method         string
 	Path           string
@@ -21,7 +22,7 @@ type Spec struct {
 }
 
 var (
-	defaultSpec = Spec{
+	defaultSpec = spec{
 		ResponseBody: strings.NewReader("OK"),
 		ResponseHeaders: map[string]string{
 			"Content-Type": "text/plain; charset=utf-8",
@@ -29,7 +30,7 @@ var (
 		ResponseCode: 200,
 	}
 
-	notAllowedSpec = Spec{
+	notAllowedSpec = spec{
 		ResponseBody: strings.NewReader("Method not allowed"),
 		ResponseHeaders: map[string]string{
 			"Content-Type": "text/plain; charset=utf-8",
@@ -40,34 +41,43 @@ var (
 
 type Server struct {
 	server *httptest.Server
-	Specs  []Spec
+	specs  []spec
 }
 
-func WithRequestHeaders(headers map[string]string) func(spec *Spec) {
-	return func(spec *Spec) {
+func WithRequestHeaders(headers map[string]string) func(spec *spec) {
+	return func(spec *spec) {
 		spec.RequestHeaders = headers
 	}
 }
 
-func WithResponseHeaders(headers map[string]string) func(spec *Spec) {
-	return func(spec *Spec) {
+func WithResponseHeaders(headers map[string]string) func(spec *spec) {
+	return func(spec *spec) {
 		spec.ResponseHeaders = headers
 	}
 }
 
-func WithResponseCode(statusCode int) func(spec *Spec) {
-	return func(spec *Spec) {
+func WithResponseCode(statusCode int) func(spec *spec) {
+	return func(spec *spec) {
 		spec.ResponseCode = statusCode
 	}
 }
 
-func WithResponseBody(body io.Reader) func(spec *Spec) {
-	return func(spec *Spec) {
+func WithResponseBody(body io.Reader) func(spec *spec) {
+	return func(spec *spec) {
 		spec.ResponseBody = body
 	}
 }
 
-func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec Spec) {
+func WithResponseBodyFromFile(path string) func(spec *spec) {
+	return func(spec *spec) {
+		body, err := os.Open(path)
+		if err != nil {
+			spec.ResponseBody = body
+		}
+	}
+}
+
+func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec spec) {
 	responseHeaders := defaultSpec.ResponseHeaders
 	// merge
 	for header, value := range spec.ResponseHeaders {
@@ -91,8 +101,8 @@ func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec Spec) {
 	res.Write(responseBytes)
 }
 
-func (s *Server) StubRequest(method, path string, options ...func(spec *Spec)) {
-	spec := Spec{
+func (s *Server) StubRequest(method, path string, options ...func(spec *spec)) {
+	spec := spec{
 		Method: method,
 		Path:   path,
 	}
@@ -101,7 +111,7 @@ func (s *Server) StubRequest(method, path string, options ...func(spec *Spec)) {
 		option(&spec)
 	}
 
-	s.Specs = append(s.Specs, spec)
+	s.specs = append(s.specs, spec)
 }
 
 func (s *Server) URL() string {
@@ -115,7 +125,7 @@ func (s *Server) URL() string {
 func (s *Server) Start() {
 	s.server = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		url := req.URL.String()
-		for _, spec := range s.Specs {
+		for _, spec := range s.specs {
 			if spec.Path != url {
 				continue
 			}
