@@ -1,83 +1,99 @@
 package httpstub
 
 import (
-	"io"
+	"encoding/json"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 )
 
-type spec struct {
+type Config func(spec *Spec)
+
+type Spec struct {
 	// Request (matcher)
 	Method         string
 	Path           string
 	RequestHeaders map[string]string
 
 	// Response
-	ResponseBody    io.Reader
+	ResponseBody    []byte
 	ResponseHeaders map[string]string
 	ResponseCode    int
 }
 
 var (
-	defaultSpec = spec{
-		ResponseBody: strings.NewReader("OK"),
+	defaultSpec = Spec{
+		ResponseBody: []byte("OK"),
 		ResponseHeaders: map[string]string{
 			"Content-Type": "text/plain; charset=utf-8",
 		},
-		ResponseCode: 200,
+		ResponseCode: http.StatusOK,
 	}
 
-	notAllowedSpec = spec{
-		ResponseBody: strings.NewReader("Method not allowed"),
+	notAllowedSpec = Spec{
+		ResponseBody: []byte("Method not allowed"),
 		ResponseHeaders: map[string]string{
 			"Content-Type": "text/plain; charset=utf-8",
 		},
-		ResponseCode: 405,
+		ResponseCode: http.StatusMethodNotAllowed,
 	}
 )
 
 type Server struct {
 	server *httptest.Server
-	specs  []spec
+	specs  []Spec
 }
 
-func WithRequestHeaders(headers map[string]string) func(spec *spec) {
-	return func(spec *spec) {
+func WithRequestHeaders(headers map[string]string) Config {
+	return func(spec *Spec) {
 		spec.RequestHeaders = headers
 	}
 }
 
-func WithResponseHeaders(headers map[string]string) func(spec *spec) {
-	return func(spec *spec) {
+func WithResponseHeaders(headers map[string]string) Config {
+	return func(spec *Spec) {
 		spec.ResponseHeaders = headers
 	}
 }
 
-func WithResponseCode(statusCode int) func(spec *spec) {
-	return func(spec *spec) {
+func WithResponseCode(statusCode int) Config {
+	return func(spec *Spec) {
 		spec.ResponseCode = statusCode
 	}
 }
 
-func WithResponseBody(body io.Reader) func(spec *spec) {
-	return func(spec *spec) {
+func WithResponseBody(body []byte) Config {
+	return func(spec *Spec) {
 		spec.ResponseBody = body
 	}
 }
 
-func WithResponseBodyFromFile(path string) func(spec *spec) {
-	return func(spec *spec) {
-		body, err := os.Open(path)
+func WithResponseBodyString(body string) Config {
+	return func(spec *Spec) {
+		spec.ResponseBody = []byte(body)
+	}
+}
+
+func WithResponseBodyJSON(body map[string]interface{}) Config {
+	return func(spec *Spec) {
+		var bodyBytes []byte
+		err := json.Unmarshal(bodyBytes, body)
+		if err != nil {
+			spec.ResponseBody = bodyBytes
+		}
+	}
+}
+
+func WithResponseBodyFile(path string) Config {
+	return func(spec *Spec) {
+		body, err := ioutil.ReadFile(path)
 		if err != nil {
 			spec.ResponseBody = body
 		}
 	}
 }
 
-func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec spec) {
+func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec Spec) {
 	responseHeaders := defaultSpec.ResponseHeaders
 	// merge
 	for header, value := range spec.ResponseHeaders {
@@ -97,12 +113,12 @@ func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec spec) {
 	if spec.ResponseBody != nil {
 		responseBody = spec.ResponseBody
 	}
-	responseBytes, _ := ioutil.ReadAll(responseBody)
-	res.Write(responseBytes)
+
+	res.Write(responseBody)
 }
 
-func (s *Server) StubRequest(method, path string, options ...func(spec *spec)) {
-	spec := spec{
+func (s *Server) StubRequest(method, path string, options ...Config) {
+	spec := Spec{
 		Method: method,
 		Path:   path,
 	}
@@ -125,6 +141,7 @@ func (s *Server) URL() string {
 func (s *Server) Start() {
 	s.server = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		url := req.URL.String()
+		var foundSpec = notAllowedSpec
 		for _, spec := range s.specs {
 			if spec.Path != url {
 				continue
@@ -148,12 +165,10 @@ func (s *Server) Start() {
 				}
 			}
 
-			defaultHTTPHandler(res, req, spec)
-			return
+			foundSpec = spec
 		}
 
-		// not allowed
-		defaultHTTPHandler(res, req, notAllowedSpec)
+		defaultHTTPHandler(res, req, foundSpec)
 	}))
 }
 
