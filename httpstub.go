@@ -78,7 +78,7 @@ func WithResponseBodyJSON(body map[string]interface{}) Config {
 	return func(spec *Spec) {
 		var bodyBytes []byte
 		err := json.Unmarshal(bodyBytes, body)
-		if err != nil {
+		if err == nil {
 			spec.ResponseBody = bodyBytes
 		}
 	}
@@ -87,7 +87,7 @@ func WithResponseBodyJSON(body map[string]interface{}) Config {
 func WithResponseBodyFile(path string) Config {
 	return func(spec *Spec) {
 		body, err := ioutil.ReadFile(path)
-		if err != nil {
+		if err == nil {
 			spec.ResponseBody = body
 		}
 	}
