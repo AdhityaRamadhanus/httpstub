@@ -9,18 +9,6 @@ import (
 
 type Config func(spec *Spec)
 
-type Spec struct {
-	// Request (matcher)
-	Method         string
-	Path           string
-	RequestHeaders map[string]string
-
-	// Response
-	ResponseBody    []byte
-	ResponseHeaders map[string]string
-	ResponseCode    int
-}
-
 var (
 	defaultSpec = Spec{
 		ResponseBody: []byte("OK"),
@@ -70,6 +58,7 @@ func WithResponseBody(body []byte) Config {
 
 func WithResponseBodyString(body string) Config {
 	return func(spec *Spec) {
+		spec.SetResponseHeader("Content-Type", "text/plain; charset=utf-8")
 		spec.ResponseBody = []byte(body)
 	}
 }
@@ -79,6 +68,18 @@ func WithResponseBodyJSON(body map[string]interface{}) Config {
 		var bodyBytes []byte
 		err := json.Unmarshal(bodyBytes, body)
 		if err == nil {
+			spec.SetResponseHeader("Content-Type", "application/json; charset=utf-8")
+			spec.ResponseBody = bodyBytes
+		}
+	}
+}
+
+func WithResponseBodyJSONFile(body map[string]interface{}) Config {
+	return func(spec *Spec) {
+		var bodyBytes []byte
+		err := json.Unmarshal(bodyBytes, body)
+		if err == nil {
+			spec.SetResponseHeader("Content-Type", "application/json; charset=utf-8")
 			spec.ResponseBody = bodyBytes
 		}
 	}
