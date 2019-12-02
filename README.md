@@ -2,15 +2,14 @@
 A wrapper package for an easier way to stub http request in golang
 
 <p>
-  <a href="#Usage">Usage |</a>
+  <a href="#examples">Examples |</a>
   <a href="#licenses">License</a>
   <br><br>
 </p>
 
-Usage
+Examples
 -----
-* You will need access token to use the api
-* generate access token
+* see godoc for more detailed examples
 ```go
   srv := httpstub.NewStubServer()
 	srv.StubRequest(http.MethodGet, "/healthz")
