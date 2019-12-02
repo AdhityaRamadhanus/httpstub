@@ -12,24 +12,32 @@ Usage
 * You will need access token to use the api
 * generate access token
 ```go
-srv := httpstub.Server{}
-srv.StubRequest(
-  http.MethodGet,
-  "/healthz",
-  httpstub.WithResponseHeaders(map[string]string{
-    "Content-Type": "application/json; charset=utf-8",
-  }),
-  httpstub.WithResponseBodyFile("../test/json/healthz.json"),
-)
-srv.Start()
-defer srv.Close()
+  srv := httpstub.NewStubServer()
+	srv.StubRequest(http.MethodGet, "/healthz")
+	defer srv.Close()
 
-url := fmt.Sprintf("%s%s", srv.URL(), "/healthz")
-req, err := http.NewRequest(testCase.Method, url, nil)
+	url := fmt.Sprintf("%s%s", srv.URL(), "/healthz")
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		panic(err)
+	}
 
-client := http.Client{}
-resp, err := client.Do(req)
-// do something with resp
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Response Body: %s\n", string(respBody))
+	fmt.Printf("Response Status Code: %d\n", resp.StatusCode)
+
+	// Output:
+	// Response Body: OK
+	// Response Status Code: 200
+}
 ```
 
 License

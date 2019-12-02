@@ -5,39 +5,33 @@ import (
 	"net/http/httptest"
 )
 
-type Config func(spec *Spec)
-
-var (
-	defaultSpec = Spec{
-		ResponseBody: []byte("OK"),
-		ResponseHeaders: map[string]string{
-			"Content-Type": "text/plain; charset=utf-8",
-		},
-		ResponseCode: http.StatusOK,
-	}
-
-	notAllowedSpec = Spec{
-		ResponseBody: []byte("Method not allowed"),
-		ResponseHeaders: map[string]string{
-			"Content-Type": "text/plain; charset=utf-8",
-		},
-		ResponseCode: http.StatusMethodNotAllowed,
-	}
-)
-
-type Server struct {
-	server *httptest.Server
-	specs  []Spec
+//StubServer is a server that stub request coming and response according to a spec (see config)
+type StubServer struct {
+	httpServer *httptest.Server
+	specs      []spec
 }
 
-func WithRequestHeaders(headers map[string]string) Config {
-	return func(spec *Spec) {
-		spec.RequestHeaders = headers
+//NewStubServer Create and Run StubServer
+func NewStubServer() *StubServer {
+	stubServer := &StubServer{
+		specs: []spec{},
 	}
+	stubServer.httpServer = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		var foundSpec = notAllowedSpec
+		for _, spec := range stubServer.specs {
+			if spec.matchRequest(req) {
+				foundSpec = spec
+			}
+		}
+
+		stubServer.createResponse(res, foundSpec)
+	}))
+
+	return stubServer
 }
 
-func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec Spec) {
-	responseHeaders := defaultSpec.ResponseHeaders
+func (s *StubServer) createResponse(res http.ResponseWriter, spec spec) {
+	responseHeaders := defaultOKSpec.ResponseHeaders
 	// merge
 	for header, value := range spec.ResponseHeaders {
 		responseHeaders[header] = value
@@ -46,13 +40,13 @@ func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec Spec) {
 		res.Header().Set(header, value)
 	}
 
-	responseCode := defaultSpec.ResponseCode
+	responseCode := defaultOKSpec.ResponseCode
 	if spec.ResponseCode != 0 {
 		responseCode = spec.ResponseCode
 	}
 	res.WriteHeader(responseCode)
 
-	responseBody := defaultSpec.ResponseBody
+	responseBody := defaultOKSpec.ResponseBody
 	if spec.ResponseBody != nil {
 		responseBody = spec.ResponseBody
 	}
@@ -60,10 +54,13 @@ func defaultHTTPHandler(res http.ResponseWriter, req *http.Request, spec Spec) {
 	res.Write(responseBody)
 }
 
-func (s *Server) StubRequest(method, path string, options ...Config) {
-	spec := Spec{
-		Method: method,
-		Path:   path,
+//StubRequest takes method, path and configs to create a spec that will be matched on server
+func (s *StubServer) StubRequest(method, path string, options ...Config) {
+	spec := spec{
+		requestMatcher: matcher{
+			Method: method,
+			Path:   path,
+		},
 	}
 
 	for _, option := range options {
@@ -73,50 +70,18 @@ func (s *Server) StubRequest(method, path string, options ...Config) {
 	s.specs = append(s.specs, spec)
 }
 
-func (s *Server) URL() string {
-	if s.server != nil {
-		return s.server.URL
+//URL return StubServer URL, your client should make a request to this URL
+func (s *StubServer) URL() string {
+	if s.httpServer == nil {
+		return "unknown"
 	}
 
-	return "unknown"
+	return s.httpServer.URL
 }
 
-func (s *Server) Start() {
-	s.server = httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		url := req.URL.String()
-		var foundSpec = notAllowedSpec
-		for _, spec := range s.specs {
-			if spec.Path != url {
-				continue
-			}
-
-			if spec.Method != req.Method {
-				continue
-			}
-
-			if spec.RequestHeaders != nil {
-				isSubset := true
-				for header, value := range spec.RequestHeaders {
-					headerVal := req.Header.Get(header)
-					if headerVal != value {
-						isSubset = false
-						break
-					}
-				}
-				if !isSubset {
-					continue
-				}
-			}
-
-			foundSpec = spec
-		}
-
-		defaultHTTPHandler(res, req, foundSpec)
-	}))
-}
-
-func (s *Server) Close() {
-	if s.server != nil {
-		s.server.Close()
+//Close the StubServer
+func (s *StubServer) Close() {
+	if s.httpServer != nil {
+		s.httpServer.Close()
 	}
 }

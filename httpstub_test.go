@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/AdhityaRamadhanus/httpstub"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestStubRequest(t *testing.T) {
@@ -59,14 +58,14 @@ func TestStubRequest(t *testing.T) {
 		ResponseBody    string
 	}{
 		{
-			Name:         "Simple spec, return 200",
+			Name:         "Return 200",
 			Method:       http.MethodGet,
 			Path:         "/healthz",
 			ResponseCode: http.StatusOK,
 			ResponseBody: "OK",
 		},
 		{
-			Name:         "Path and method not found in spec, return 405",
+			Name:         "Return 405",
 			Method:       http.MethodGet,
 			Path:         "/healthzzzzz",
 			ResponseCode: http.StatusMethodNotAllowed,
@@ -78,8 +77,7 @@ func TestStubRequest(t *testing.T) {
 		testCase := testCase
 		t.Run(testCase.Name, func(t *testing.T) {
 			t.Parallel()
-			srv := httpstub.Server{}
-			srv.Start()
+			srv := httpstub.NewStubServer()
 			for _, spec := range stubSpecs {
 				srv.StubRequest(
 					spec.Method,
@@ -91,19 +89,34 @@ func TestStubRequest(t *testing.T) {
 
 			url := fmt.Sprintf("%s%s", srv.URL(), testCase.Path)
 			req, err := http.NewRequest(testCase.Method, url, nil)
+			if err != nil {
+				t.Fatalf("http.NewRequest() err = %s; want nil", err)
+			}
 			for header, value := range testCase.RequestHeaders {
 				req.Header.Set(header, value)
 			}
 
-			client := http.Client{}
-			resp, err := client.Do(req)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("http.DefaultClient.Do(req) err = %s; want nil", err)
+			}
+			defer resp.Body.Close()
 
-			// assert
-			if assert.NoError(t, err, "Should not return error") {
-				defer resp.Body.Close()
-				respBodyBytes, _ := ioutil.ReadAll(resp.Body)
-				assert.Equal(t, testCase.ResponseBody, string(respBodyBytes))
-				assert.Equal(t, testCase.ResponseCode, resp.StatusCode)
+			respBodyBytes, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("ioutil.ReadALl(resp.Body) err = %s; want nil", err)
+			}
+
+			wantBody := testCase.ResponseBody
+			gotBody := string(respBodyBytes)
+			if gotBody != wantBody {
+				t.Errorf("StubRequest(spec) body = %s; want %s", gotBody, wantBody)
+			}
+
+			wantCode := testCase.ResponseCode
+			gotCode := resp.StatusCode
+			if gotCode != wantCode {
+				t.Errorf("StubRequest(spec) statusCode = %d; want %d", gotCode, wantCode)
 			}
 		})
 	}
