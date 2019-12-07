@@ -9,115 +9,159 @@ import (
 	"github.com/AdhityaRamadhanus/httpstub"
 )
 
-func TestStubRequest(t *testing.T) {
+type checkFunc func(t *testing.T, res *http.Response, body string)
+type routeSpec struct {
+	Method  string
+	Path    string
+	Options []httpstub.Config
+}
+
+func newServer(t *testing.T, routeSpecs []routeSpec) (*httpstub.StubServer, func()) {
+	t.Helper()
+	srv := httpstub.NewStubServer()
+	for _, spec := range routeSpecs {
+		srv.StubRequest(
+			spec.Method,
+			spec.Path,
+			spec.Options...,
+		)
+	}
+
+	teardown := func() {
+		srv.Close()
+	}
+
+	return srv, teardown
+}
+
+var (
+	checkHTTPResponseHeader = func(key, value string) checkFunc {
+		return func(t *testing.T, res *http.Response, body string) {
+			if res.Header.Get(key) != value {
+				t.Errorf("responseHeader[%q] = %s; want %s", key, res.Header.Get(key), value)
+			}
+		}
+	}
+
+	checkHTTPResponseBody = func(val string) checkFunc {
+		return func(t *testing.T, res *http.Response, body string) {
+			if body != val {
+				t.Errorf("responseBody = %s; want %s", body, val)
+			}
+		}
+	}
+
+	checkHTTPResponseCode = func(statusCode int) checkFunc {
+		return func(t *testing.T, res *http.Response, body string) {
+			if res.StatusCode != statusCode {
+				t.Errorf("responseCode = %d; want %d", res.StatusCode, statusCode)
+			}
+		}
+	}
+)
+
+func TestStubRequest_matcher(t *testing.T) {
 	// preparation
-	stubSpecs := []struct {
-		Method  string
-		Path    string
-		Options []httpstub.Config
-	}{
-		{
-			Method: http.MethodGet,
-			Path:   "/healthz",
+	routeSpecs := []routeSpec{
+		{http.MethodGet, "/healthz/get", nil},
+		{http.MethodPost, "/healthz/post", nil},
+		{http.MethodHead, "/healthz/head", nil},
+		{http.MethodGet, "/healthz/custom-headers", []httpstub.Config{
+			httpstub.WithRequestHeaders(map[string]string{"Authorization": "Test"})},
 		},
-		{
-			Method: http.MethodGet,
-			Path:   "/healthz",
-			Options: []httpstub.Config{
-				httpstub.WithRequestHeaders(map[string]string{"Authorization": "Test"}),
-				httpstub.WithResponseBodyString("OK With Authorization"),
-			},
+		{http.MethodPost, "/healthz/basic-auth", []httpstub.Config{
+			httpstub.WithBasicAuth("test", "test")},
 		},
-		{
-			Method: http.MethodPost,
-			Path:   "/healthz/status",
-			Options: []httpstub.Config{
-				httpstub.WithBasicAuth("test", "test"),
-				httpstub.WithResponseBodyString("OK With Authorization"),
-			},
-		},
-		{
-			Method: http.MethodGet,
-			Path:   "/healthz",
-			Options: []httpstub.Config{
-				httpstub.WithRequestHeaders(map[string]string{"Authorization": "Test"}),
-				httpstub.WithResponseBodyString("OK With Authorization"),
-			},
+		{http.MethodGet, "/healthz/conflicted-headers", []httpstub.Config{
+			httpstub.WithBasicAuth("test", "test"),
+			httpstub.WithBearerToken("bearer token")},
 		},
 	}
 
+	server, teardown := newServer(t, routeSpecs)
+	defer teardown()
+
 	testCases := []struct {
-		Name           string
 		Method         string
 		Path           string
 		RequestHeaders map[string]string
 
 		// used in assertion
-		ResponseHeaders map[string]string
-		ResponseCode    int
-		ResponseBody    string
+		checkFuncs []checkFunc
 	}{
 		{
-			Name:         "Return 200",
-			Method:       http.MethodGet,
-			Path:         "/healthz",
-			ResponseCode: http.StatusOK,
-			ResponseBody: "OK",
+			Method: http.MethodGet,
+			Path:   "/healthz/get",
+			checkFuncs: []checkFunc{
+				checkHTTPResponseBody("OK"),
+				checkHTTPResponseCode(http.StatusOK),
+			},
 		},
 		{
-			Name:         "Return 405",
-			Method:       http.MethodGet,
-			Path:         "/healthzzzzz",
-			ResponseCode: http.StatusMethodNotAllowed,
-			ResponseBody: "Method not allowed",
+			Method: http.MethodPost,
+			Path:   "/healthz/post",
+			checkFuncs: []checkFunc{
+				checkHTTPResponseBody("OK"),
+				checkHTTPResponseCode(http.StatusOK),
+			},
+		},
+		{
+			Method: http.MethodHead,
+			Path:   "/healthz/head",
+			checkFuncs: []checkFunc{
+				checkHTTPResponseBody(""),
+				checkHTTPResponseCode(http.StatusOK),
+			},
+		},
+		{
+			Method:         http.MethodGet,
+			Path:           "/healthz/custom-headers",
+			RequestHeaders: map[string]string{"Authorization": "Test"},
+			checkFuncs: []checkFunc{
+				checkHTTPResponseBody("OK"),
+				checkHTTPResponseCode(http.StatusOK),
+			},
+		},
+		{
+			Method:         http.MethodPost,
+			Path:           "/healthz/basic-auth",
+			RequestHeaders: map[string]string{"Authorization": "Basic dGVzdDp0ZXN0"},
+			checkFuncs: []checkFunc{
+				checkHTTPResponseBody("OK"),
+				checkHTTPResponseCode(http.StatusOK),
+			},
 		},
 	}
 
-	for _, testCase := range testCases {
-		testCase := testCase
-		t.Run(testCase.Name, func(t *testing.T) {
-			t.Parallel()
-			srv := httpstub.NewStubServer()
-			for _, spec := range stubSpecs {
-				srv.StubRequest(
-					spec.Method,
-					spec.Path,
-					spec.Options...,
-				)
-			}
-			defer srv.Close()
+	t.Run("parallel_group", func(t *testing.T) {
+		for _, testCase := range testCases {
+			testCase := testCase
+			t.Run(testCase.Path, func(t *testing.T) {
+				t.Parallel()
+				url := fmt.Sprintf("%s%s", server.URL(), testCase.Path)
+				req, err := http.NewRequest(testCase.Method, url, nil)
+				if err != nil {
+					t.Fatalf("http.NewRequest() err = %s; want nil", err)
+				}
+				for header, value := range testCase.RequestHeaders {
+					req.Header.Set(header, value)
+				}
 
-			url := fmt.Sprintf("%s%s", srv.URL(), testCase.Path)
-			req, err := http.NewRequest(testCase.Method, url, nil)
-			if err != nil {
-				t.Fatalf("http.NewRequest() err = %s; want nil", err)
-			}
-			for header, value := range testCase.RequestHeaders {
-				req.Header.Set(header, value)
-			}
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatalf("http.DefaultClient.Do(req) err = %s; want nil", err)
+				}
+				defer resp.Body.Close()
 
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatalf("http.DefaultClient.Do(req) err = %s; want nil", err)
-			}
-			defer resp.Body.Close()
+				respBodyBytes, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("ioutil.ReadALl(resp.Body) err = %s; want nil", err)
+				}
 
-			respBodyBytes, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				t.Fatalf("ioutil.ReadALl(resp.Body) err = %s; want nil", err)
-			}
-
-			wantBody := testCase.ResponseBody
-			gotBody := string(respBodyBytes)
-			if gotBody != wantBody {
-				t.Errorf("StubRequest(spec) body = %s; want %s", gotBody, wantBody)
-			}
-
-			wantCode := testCase.ResponseCode
-			gotCode := resp.StatusCode
-			if gotCode != wantCode {
-				t.Errorf("StubRequest(spec) statusCode = %d; want %d", gotCode, wantCode)
-			}
-		})
-	}
+				for _, checkFunc := range testCase.checkFuncs {
+					checkFunc(t, resp, string(respBodyBytes))
+				}
+			})
+		}
+	})
 }

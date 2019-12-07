@@ -82,7 +82,7 @@ func WithBasicAuth(username, password string) Config {
 	credentials := fmt.Sprintf("%s:%s", username, password)
 	credentials = base64.StdEncoding.EncodeToString([]byte(credentials))
 	return func(spec *spec) {
-		spec.setRequestHeader("Authorization", credentials)
+		spec.setRequestHeader("Authorization", fmt.Sprintf("Basic %s", credentials))
 	}
 }
 

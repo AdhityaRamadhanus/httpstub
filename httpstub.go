@@ -51,6 +51,8 @@ func (s *StubServer) createResponse(res http.ResponseWriter, spec spec) {
 		responseBody = spec.ResponseBody
 	}
 
+	// HEAD METHOD HANDLED BY GO, SO IT WILL NOT RETURN ANYTHING
+
 	res.Write(responseBody)
 }
 
